@@ -1473,9 +1473,19 @@ export const openDocumentComments = createAction({
       !!activeDocumentId && can.comment && !!stores.auth.team?.commentingEnabled
     );
   },
-  perform: ({ activeDocumentId, stores }) => {
-    if (!activeDocumentId) {
+  perform: ({ activeDocumentId, sidebarContext, stores }) => {
+    const document = activeDocumentId
+      ? stores.documents.get(activeDocumentId)
+      : undefined;
+    if (!document) {
       return;
+    }
+
+    // Navigate to the document when triggered from outside its scene (e.g. a
+    // document list), as the comments sidebar is only rendered there.
+    const path = documentPath(document);
+    if (!history.location.pathname.startsWith(path)) {
+      history.push(path, { sidebarContext });
     }
 
     stores.ui.set({ rightSidebar: "comments" });

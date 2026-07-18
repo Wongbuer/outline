@@ -30,6 +30,12 @@ export function getRedirectUrl(authUrl: string) {
   return url.toString();
 }
 
+/**
+ * Checks whether a link is a hash link to an anchor on the current page.
+ *
+ * @param href the link to check.
+ * @returns true if the link points to a hash on the current page.
+ */
 export function isHash(href: string) {
   if (href[0] === "#") {
     return true;
@@ -109,6 +115,21 @@ export function isLoopbackUri(uri: string | undefined): boolean {
   } catch {
     return false;
   }
+}
+
+/**
+ * Returns whether a query string value represents a truthy value, such as
+ * "true", "1", "on", "yes", or a bare flag with no value.
+ *
+ * @param value The query string value to check, typically from URLSearchParams.
+ * @returns true if the value is considered truthy.
+ */
+export function isTruthyQueryValue(value: string | null | undefined): boolean {
+  if (value === null || value === undefined) {
+    return false;
+  }
+  const normalized = value.toLowerCase();
+  return normalized === "" || ["true", "1", "on", "yes"].includes(normalized);
 }
 
 /**

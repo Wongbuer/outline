@@ -7,7 +7,6 @@ import { baseKeymap } from "prosemirror-commands";
 import { dropCursor } from "prosemirror-dropcursor";
 import { gapCursor } from "prosemirror-gapcursor";
 import type { InputRule } from "prosemirror-inputrules";
-import { inputRules } from "prosemirror-inputrules";
 import { keymap } from "prosemirror-keymap";
 import type { NodeSpec, MarkSpec } from "prosemirror-model";
 import { Schema, Node as ProsemirrorNode } from "prosemirror-model";
@@ -31,7 +30,9 @@ import type { EmbedDescriptor } from "@shared/editor/embeds";
 import type { CommandFactory, WidgetProps } from "@shared/editor/lib/Extension";
 import type { AnyExtension, AnyExtensionClass } from "@shared/editor/lib/types";
 import ExtensionManager from "@shared/editor/lib/ExtensionManager";
+import { inputRules } from "@shared/editor/lib/inputRules";
 import type { MarkdownSerializer } from "@shared/editor/lib/markdown/serializer";
+import { isRemoteTransaction } from "@shared/editor/lib/multiplayer";
 import textBetween from "@shared/editor/lib/textBetween";
 import { basicExtensions as extensions } from "@shared/editor/nodes";
 import type ReactNode from "@shared/editor/nodes/ReactNode";
@@ -53,7 +54,8 @@ import type { Properties } from "~/types";
 import Logger from "~/utils/Logger";
 import ComponentView from "./components/ComponentView";
 import EditorContext from "./components/EditorContext";
-import type { NodeViewRenderer } from "./components/NodeViewRenderer";
+import { NodeViewRenderer } from "./components/NodeViewRenderer";
+import type { PortalRenderer } from "./components/NodeViewRenderer";
 
 import WithTheme from "./components/WithTheme";
 import { isArray, isNull, map } from "es-toolkit/compat";
@@ -118,8 +120,11 @@ export type Props = {
   /** Callback when user uses cancel key combo */
   onCancel?: () => void;
   /** Callback when user changes editor content */
-  // oxlint-disable-next-line @typescript-eslint/no-explicit-any
-  onChange?: (value: (asString?: boolean, trim?: boolean) => any) => void;
+  onChange?: (
+    // oxlint-disable-next-line @typescript-eslint/no-explicit-any
+    value: (asString?: boolean, trim?: boolean) => any,
+    event?: { remote: boolean }
+  ) => void;
   /** Callback when a comment mark is clicked */
   onClickCommentMark?: (commentId: string) => void;
   /**
@@ -177,6 +182,8 @@ type State = {
   isEditorFocused: boolean;
   /** Image that's being currently viewed in Lightbox */
   activeLightboxImage: LightboxImage | null;
+  /** The comment thread currently highlighted from its gutter indicator */
+  hoveredCommentId: string | null;
 };
 
 /**
@@ -207,6 +214,7 @@ export class Editor extends React.PureComponent<
     isRTL: false,
     isEditorFocused: false,
     activeLightboxImage: null,
+    hoveredCommentId: null,
   };
 
   isInitialized = false;
@@ -227,7 +235,9 @@ export class Editor extends React.PureComponent<
   };
 
   widgets: { [name: string]: React.FC<WidgetProps> };
-  renderers = observable.set<NodeViewRenderer<ComponentProps>>();
+  nodeRenderers = observable.set<NodeViewRenderer<ComponentProps>>();
+  decorationRenderers = observable.set<PortalRenderer>();
+  private portalDestroyers = new WeakMap<HTMLElement, () => void>();
   nodes: { [name: string]: NodeSpec };
   marks: { [name: string]: MarkSpec };
   commands: Record<string, CommandFactory>;
@@ -283,7 +293,7 @@ export class Editor extends React.PureComponent<
 
       // NodeView will not automatically render when editable changes so we must trigger an update
       // manually, see: https://discuss.prosemirror.net/t/re-render-custom-nodeview-when-view-editable-changes/6441
-      Array.from(this.renderers).forEach((view) =>
+      Array.from(this.nodeRenderers).forEach((view) =>
         view.setProp("isEditable", false)
       );
     }
@@ -537,7 +547,11 @@ export class Editor extends React.PureComponent<
             (self.props.canUpdate && transactions.some(isEditingCheckbox)) ||
             (self.props.canComment && transactions.some(isEditingComment)))
         ) {
-          self.handleChange();
+          self.handleChange({
+            remote: transactions.some(
+              (tr) => tr.docChanged && isRemoteTransaction(tr)
+            ),
+          });
         }
 
         self.handleEditorInit();
@@ -848,13 +862,15 @@ export class Editor extends React.PureComponent<
     this.view.dispatch(this.view.state.tr.setMeta("theme", event.detail));
   };
 
-  private handleChange = () => {
+  private handleChange = (event?: { remote: boolean }) => {
     if (!this.props.onChange) {
       return;
     }
 
-    this.props.onChange((asString = true, trim = false) =>
-      this.view ? this.value(asString, trim) : undefined
+    this.props.onChange(
+      (asString = true, trim = false) =>
+        this.view ? this.value(asString, trim) : undefined,
+      event
     );
   };
 
@@ -884,6 +900,55 @@ export class Editor extends React.PureComponent<
     return false;
   };
 
+  /**
+   * Renders a React component into the editor's shared React tree and returns a
+   * DOM element to mount it into — for example from a ProseMirror decoration
+   * widget. Because it joins the editor tree via a portal, the component
+   * inherits all editor context (theme, translations, stores) with no separate
+   * React root. Pair every call with destroyPortal in the widget's teardown.
+   *
+   * @param Component - The React component to render.
+   * @param props - The props to pass to the component.
+   * @param inline - Whether to mount into an inline element (default true).
+   * @returns the DOM element the component is rendered into.
+   */
+  public renderToPortal<P extends object>(
+    Component: React.FunctionComponent<P>,
+    props: P,
+    inline = true
+  ): HTMLElement {
+    const element = document.createElement(inline ? "span" : "div");
+    const renderer = new NodeViewRenderer(element, Component, props);
+    this.decorationRenderers.add(renderer);
+    this.portalDestroyers.set(element, () =>
+      this.decorationRenderers.delete(renderer)
+    );
+    return element;
+  }
+
+  /**
+   * Unmounts a component previously rendered with renderToPortal.
+   *
+   * @param element - The element returned by renderToPortal.
+   */
+  public destroyPortal(element: HTMLElement) {
+    this.portalDestroyers.get(element)?.();
+    this.portalDestroyers.delete(element);
+  }
+
+  /**
+   * Highlight (or clear) the comment thread whose gutter indicator is hovered.
+   * Applied as container CSS rather than by mutating the mark's DOM directly,
+   * which would trip ProseMirror's mutation observer and force a redraw.
+   *
+   * @param commentId - The comment thread id to highlight, or null to clear.
+   */
+  public setHoveredCommentId = (commentId: string | null) => {
+    if (this.state.hoveredCommentId !== commentId) {
+      this.setState({ hoveredCommentId: commentId });
+    }
+  };
+
   public render() {
     const { readOnly, canUpdate, grow, style, className, onKeyDown } =
       this.props;
@@ -907,6 +972,7 @@ export class Editor extends React.PureComponent<
               readOnly={readOnly}
               readOnlyWriteCheckboxes={canUpdate}
               focusedCommentId={this.props.focusedCommentId}
+              hoveredCommentId={this.state.hoveredCommentId ?? undefined}
               userId={this.props.userId}
               editorStyle={this.props.editorStyle}
               commenting={!!this.props.onClickCommentMark}
@@ -926,7 +992,11 @@ export class Editor extends React.PureComponent<
               ))}
             <Observer>
               {() => (
-                <>{Array.from(this.renderers).map((view) => view.content)}</>
+                <>
+                  {[...this.nodeRenderers, ...this.decorationRenderers].map(
+                    (view) => view.content
+                  )}
+                </>
               )}
             </Observer>
           </Flex>
@@ -948,6 +1018,7 @@ export class Editor extends React.PureComponent<
 const EditorContainer = styled(Styles)<{
   userId?: string;
   focusedCommentId?: string;
+  hoveredCommentId?: string;
 }>`
   ${(props) =>
     props.focusedCommentId &&
@@ -961,6 +1032,24 @@ const EditorContainer = styled(Styles)<{
         }
       }
       a#comment-${props.focusedCommentId}
+        ~ span.component-image
+        div.image-wrapper {
+        outline: ${props.theme.commentedImageOutlineDark} solid 2px;
+      }
+    `}
+
+  ${(props) =>
+    props.hoveredCommentId &&
+    props.hoveredCommentId !== props.focusedCommentId &&
+    css`
+      span#comment-${props.hoveredCommentId} {
+        background: ${props.theme.commentMarkBackground};
+
+        * {
+          background: transparent !important;
+        }
+      }
+      a#comment-${props.hoveredCommentId}
         ~ span.component-image
         div.image-wrapper {
         outline: ${props.theme.commentedImageOutlineDark} solid 2px;

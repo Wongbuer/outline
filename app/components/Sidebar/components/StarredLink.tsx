@@ -5,8 +5,8 @@ import * as React from "react";
 import { useEffect, useState } from "react";
 import { useHistory } from "react-router-dom";
 import styled from "styled-components";
-import { UserPreference } from "@shared/types";
-import { ProsemirrorHelper } from "@shared/utils/ProsemirrorHelper";
+import { type NavigationNode, UserPreference } from "@shared/types";
+import { ProsemirrorDataHelper } from "@shared/utils/ProsemirrorDataHelper";
 import type Collection from "~/models/Collection";
 import type Document from "~/models/Document";
 import type Star from "~/models/Star";
@@ -75,6 +75,8 @@ type StarredCollectionLinkProps = {
   isDraggingAnyStar: boolean;
 };
 
+const emptyChildDocuments: NavigationNode[] = [];
+
 const StarredDocumentLink = observer(function StarredDocumentLink({
   star,
   document,
@@ -102,7 +104,7 @@ const StarredDocumentLink = observer(function StarredDocumentLink({
     : undefined;
   const childDocuments = documentCollection
     ? documentCollection.getChildrenForDocument(document.id)
-    : [];
+    : emptyChildDocuments;
   const hasChildDocuments = childDocuments.length > 0;
   const displayChildDocuments = expanded && !isDragging;
   const expansion = useSidebarExpansionState(
@@ -152,7 +154,7 @@ const StarredDocumentLink = observer(function StarredDocumentLink({
             document.fullWidth ??
             user.getPreference(UserPreference.FullWidthDocuments),
           title: input,
-          data: ProsemirrorHelper.getEmptyDocument(),
+          data: ProsemirrorDataHelper.getEmpty(),
         },
         { publish: true }
       );
@@ -298,7 +300,7 @@ const StarredCollectionLink = observer(function StarredCollectionLink({
           collectionId: collection.id,
           title: input,
           fullWidth: user.getPreference(UserPreference.FullWidthDocuments),
-          data: ProsemirrorHelper.getEmptyDocument(),
+          data: ProsemirrorDataHelper.getEmpty(),
         },
         { publish: true }
       );
