@@ -1,6 +1,7 @@
 import type { AnyExtensionClass } from "@shared/editor/lib/types";
 import BlockMenuExtension from "~/editor/extensions/BlockMenu";
 import ClipboardTextSerializer from "~/editor/extensions/ClipboardTextSerializer";
+import CommentGutterExtension from "~/editor/extensions/CommentGutter";
 import DiagramsExtension from "@shared/editor/extensions/Diagrams";
 import DragHandle from "~/editor/extensions/DragHandle";
 import EmojiMenuExtension from "~/editor/extensions/EmojiMenu";
@@ -26,6 +27,7 @@ export const withUIExtensions = (nodes: Nodes) => [
   FindAndReplaceExtension,
   HoverPreviewsExtension,
   SelectionToolbarExtension,
+  CommentGutterExtension,
   DiagramsExtension,
   DragHandle,
   // Order these default key handlers last

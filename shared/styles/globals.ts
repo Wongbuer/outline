@@ -161,6 +161,14 @@ export default createGlobalStyle<Props>`
     cursor: grabbing !important;
   }
 
+  /* Image/media resize drag cursor */
+  &.${EditorStyleHelper.resizeDragging},
+  &.${EditorStyleHelper.resizeDragging} *,
+  &.${EditorStyleHelper.resizeDragging} *::before,
+  &.${EditorStyleHelper.resizeDragging} *::after {
+    cursor: var(--resize-drag-cursor) !important;
+  }
+
   /* prosemirror-dropcursor renders adjacent to the editor (in view.dom.offsetParent), outside
      the styled EditorContainer scope, so this rule has to live globally. */
   .drop-cursor {

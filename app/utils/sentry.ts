@@ -13,6 +13,11 @@ import {
   UpdateRequiredError,
 } from "./errors";
 
+/**
+ * Initializes the Sentry error tracking client for the browser.
+ *
+ * @param history the router history used for navigation instrumentation.
+ */
 export function initSentry(history: History) {
   const ignoredErrorTypes = [
     AuthorizationError,
@@ -36,6 +41,7 @@ export function initSentry(history: History) {
     tracesSampleRate: env.ENVIRONMENT === "production" ? 0.1 : 1,
     ignoreErrors: [
       "Failed to fetch dynamically imported module",
+      "Importing a module script failed",
       "ResizeObserver loop completed with undelivered notifications",
       "ResizeObserver loop limit exceeded",
       "Object Not Found Matching Id",
