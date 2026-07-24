@@ -1,3 +1,4 @@
+import { setTimeout as delay } from "node:timers/promises";
 import emojiRegex from "emoji-regex";
 import type { JSDOM } from "jsdom";
 import { chunk, isMatch } from "es-toolkit/compat";
@@ -507,12 +508,50 @@ export class ProsemirrorHelper extends SharedProsemirrorHelper {
    * @returns The content as a HTML string
    */
   public static async toHTML(node: Node, options?: HTMLOptions) {
+    return this.withRenderLock(async () => this.renderHTML(node, options));
+  }
+
+  /**
+   * Serializes calls to the given function, the DOM environment is patched
+   * process-wide during rendering so only one render may run at a time.
+   *
+   * @param fn The function to run once preceding renders have completed
+   * @returns The result of the function
+   */
+  private static withRenderLock<T>(fn: () => Promise<T>): Promise<T> {
+    const run = this.renderQueue.then(fn, fn);
+    this.renderQueue = run.catch(() => undefined);
+    return run;
+  }
+
+  /** Chain serializing concurrent HTML renders. */
+  private static renderQueue: Promise<unknown> = Promise.resolve();
+
+  /**
+   * Flushes pending React passive effects, and any zero-delay timers they
+   * schedule, by yielding a fixed number of macrotask turns. Errors thrown
+   * inside effects surface as uncaught timer exceptions rather than being
+   * caught by the node view fallback.
+   *
+   * @param turns The number of macrotask turns to yield
+   */
+  private static async flushReactEffects(turns = 3) {
+    for (let i = 0; i < turns; i++) {
+      await delay(0);
+    }
+  }
+
+  private static async renderHTML(node: Node, options?: HTMLOptions) {
     let view;
     let cleanupEnv;
     let dom: JSDOM | undefined;
 
-    // Loaded lazily to keep jsdom off the startup path — only HTML export needs it.
+    // Loaded lazily to keep jsdom and react-dom off the startup path — only
+    // HTML export needs them. Imported under the render lock while globals are
+    // unpatched so that React's scheduler binds Node-compatible timers rather
+    // than the JSDOM window.
     const { JSDOM } = await import("jsdom");
+    const { createNodeViews } = await import("@server/editor/nodeViews");
 
     try {
       const sheet = new ServerStyleSheet();
@@ -586,6 +625,10 @@ export class ProsemirrorHelper extends SharedProsemirrorHelper {
 
       cleanupEnv = this.patchGlobalEnv(dom.window);
 
+      // Collects styles from React components rendered as node views.
+      const componentSheet = new ServerStyleSheet();
+      const nodeViews = createNodeViews(componentSheet);
+
       const diffPlugins = options?.changes
         ? new Diff({ changes: options.changes }).plugins
         : [];
@@ -630,8 +673,19 @@ export class ProsemirrorHelper extends SharedProsemirrorHelper {
         {
           state,
           editable: () => false,
+          nodeViews,
         }
       );
+
+      // Allow components that render content in an effect, such as embeds, to
+      // complete before the document is serialized.
+      await this.flushReactEffects();
+
+      // Components may render editable regions, such as captions, but the
+      // exported document is static.
+      for (const el of doc.querySelectorAll('[contenteditable="true"]')) {
+        el.removeAttribute("contenteditable");
+      }
 
       // Convert relative urls to absolute
       if (options?.baseUrl) {
@@ -697,6 +751,14 @@ export class ProsemirrorHelper extends SharedProsemirrorHelper {
         link.setAttribute("href", katexStylesheetUrl);
         doc.head.appendChild(link);
       }
+
+      if (options?.includeStyles !== false) {
+        const componentStyles = componentSheet.getStyleTags();
+        if (componentStyles) {
+          doc.head.insertAdjacentHTML("beforeend", componentStyles);
+        }
+      }
+      componentSheet.seal();
 
       const output = dom.serialize();
 
