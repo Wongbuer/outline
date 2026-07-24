@@ -1,24 +1,51 @@
-import { DOMSerializer } from "prosemirror-model";
-import type { Node as ProsemirrorNode } from "prosemirror-model";
-import type { NodeView, NodeViewConstructor } from "prosemirror-view";
+import { DOMSerializer, type Node as ProsemirrorNode } from "prosemirror-model";
+import type {
+  Decoration,
+  EditorView,
+  NodeView,
+  NodeViewConstructor,
+} from "prosemirror-view";
 import type { ServerStyleSheet } from "styled-components";
 import type ReactNode from "@shared/editor/nodes/ReactNode";
-import { toError } from "@shared/utils/error";
+import { errToString } from "@shared/utils/error";
+import { extensionManager } from "@server/editor";
 import Logger from "@server/logging/Logger";
 import { ComponentView } from "./ComponentView";
-import { extensionManager } from ".";
 
 // Nodes where the component depends on browser behavior, such as image load
 // events, and the toDOM spec is already optimized for static export.
 const nodesPreferringToDOM = new Set(["image", "simple_image"]);
 
 /**
- * Creates the ProseMirror node views map for server-side HTML export,
- * rendering nodes with their React component where available and falling back
- * to the node's `toDOM` spec when the component fails to render.
+ * Renders a node with its plain `toDOM` spec – today's server export output –
+ * as a static NodeView. Used as the fallback when a node has no React component
+ * or its component cannot render server-side (e.g. Mention).
+ */
+function renderToDOMFallback(node: ProsemirrorNode): NodeView {
+  const toDOM = node.type.spec.toDOM;
+  const tag = node.type.spec.inline ? "span" : "div";
+  const rendered = toDOM
+    ? DOMSerializer.renderSpec(document, toDOM(node))
+    : { dom: document.createElement(tag), contentDOM: undefined };
+
+  return {
+    // renderSpec is typed to return a generic DOM node; our node specs always
+    // produce an element.
+    dom: rendered.dom as HTMLElement,
+    contentDOM: rendered.contentDOM,
+    update: () => false,
+    ignoreMutation: () => true,
+  };
+}
+
+/**
+ * Builds the set of ProseMirror NodeViews used during server HTML export,
+ * mirroring the browser editor: every extension with a React `component`
+ * renders through {@link ComponentView}. A component that throws on
+ * construction degrades gracefully to its `toDOM` output.
  *
- * @param sheet Stylesheet collecting the styles of rendered components.
- * @returns A map of node name to node view constructor.
+ * @param sheet The per-export styled-components sheet the components render into.
+ * @returns A map of node name to NodeView constructor.
  */
 export function createNodeViews(
   sheet: ServerStyleSheet
@@ -31,7 +58,12 @@ export function createNodeViews(
       )
       .map((extension: ReactNode) => [
         extension.name,
-        (node, view, getPos, decorations) => {
+        (
+          node: ProsemirrorNode,
+          view: EditorView,
+          getPos: () => number | undefined,
+          decorations: readonly Decoration[]
+        ): NodeView => {
           try {
             return new ComponentView(extension.component, {
               node,
@@ -42,33 +74,15 @@ export function createNodeViews(
             });
           } catch (err) {
             Logger.warn(
-              `Failed to render component for node "${node.type.name}", falling back to toDOM`,
-              toError(err)
+              "Component view failed to render, falling back to toDOM",
+              {
+                node: node.type.name,
+                error: errToString(err),
+              }
             );
-            return renderToDOM(node);
+            return renderToDOMFallback(node);
           }
         },
       ])
   ) as Record<string, NodeViewConstructor>;
-}
-
-function renderToDOM(node: ProsemirrorNode): NodeView {
-  const spec = node.type.spec.toDOM?.(node);
-  const { dom, contentDOM } = DOMSerializer.renderSpec(
-    document,
-    spec ?? ["span"]
-  );
-
-  if (dom instanceof HTMLElement) {
-    return { dom, contentDOM, update: () => false, ignoreMutation: () => true };
-  }
-
-  const wrapper = document.createElement(node.isInline ? "span" : "div");
-  wrapper.appendChild(dom);
-  return {
-    dom: wrapper,
-    contentDOM,
-    update: () => false,
-    ignoreMutation: () => true,
-  };
 }

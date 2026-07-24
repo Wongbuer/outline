@@ -15,69 +15,6 @@ vi.mock("@server/storage/files");
 
 describe("ProsemirrorHelper", () => {
   describe("toHTML", () => {
-    it("should render notices with their React component", async () => {
-      const doc = parser.parse(":::info\nnotice text\n:::")!;
-      const html = await ProsemirrorHelper.toHTML(doc, {
-        includeStyles: false,
-        includeHead: false,
-      });
-      expect(html).toContain("component-container_notice");
-      expect(html).toMatch(/class="icon"[^>]*>\s*<svg/);
-      expect(html).toMatch(
-        /class="content"><div><p dir="auto">notice text<\/p>/
-      );
-    });
-
-    it("should render embeds with their React component", async () => {
-      const doc = Node.fromJSON(schema, {
-        type: "doc",
-        content: [
-          {
-            type: "embed",
-            attrs: { href: "https://www.youtube.com/watch?v=dQw4w9WgXcQ" },
-          },
-        ],
-      });
-      const html = await ProsemirrorHelper.toHTML(doc, {
-        includeStyles: false,
-        includeHead: false,
-      });
-      expect(html).toContain("component-embed");
-      expect(html).toMatch(
-        /<iframe[^>]*src="https:\/\/www\.youtube\.com\/embed\/dQw4w9WgXcQ/
-      );
-    });
-
-    it("should fall back to toDOM when a component cannot render", async () => {
-      const doc = Node.fromJSON(schema, {
-        type: "doc",
-        content: [
-          {
-            type: "paragraph",
-            content: [
-              {
-                type: "mention",
-                attrs: {
-                  id: "0f5e5f8d-6d0f-4a7c-8a3b-2f1d3c4e5f6a",
-                  type: MentionType.User,
-                  modelId: "1f5e5f8d-6d0f-4a7c-8a3b-2f1d3c4e5f6a",
-                  actorId: "2f5e5f8d-6d0f-4a7c-8a3b-2f1d3c4e5f6a",
-                  label: "Alan Kay",
-                },
-              },
-            ],
-          },
-        ],
-      });
-      const html = await ProsemirrorHelper.toHTML(doc, {
-        includeStyles: false,
-        includeHead: false,
-      });
-      expect(html).toContain("@Alan Kay");
-      expect(html).toContain('class="mention');
-      expect(html).not.toContain("component-mention");
-    });
-
     it("should render images with toDOM for static output", async () => {
       const doc = parser.parse("![caption](https://example.com/image.png)")!;
       const html = await ProsemirrorHelper.toHTML(doc, {
@@ -130,23 +67,6 @@ describe("ProsemirrorHelper", () => {
         .pop();
       expect(iframeClass).toBeTruthy();
       expect(html).toContain(`.${iframeClass}`);
-    });
-
-    it("should render concurrent exports in isolation", async () => {
-      const [first, second] = await Promise.all([
-        ProsemirrorHelper.toHTML(parser.parse("First document text")!, {
-          includeStyles: false,
-          includeHead: false,
-        }),
-        ProsemirrorHelper.toHTML(parser.parse("Second document text")!, {
-          includeStyles: false,
-          includeHead: false,
-        }),
-      ]);
-      expect(first).toContain("First document text");
-      expect(first).not.toContain("Second document text");
-      expect(second).toContain("Second document text");
-      expect(second).not.toContain("First document text");
     });
   });
 

@@ -508,223 +508,196 @@ export class ProsemirrorHelper extends SharedProsemirrorHelper {
    * @returns The content as a HTML string
    */
   public static async toHTML(node: Node, options?: HTMLOptions) {
-    return this.withRenderLock(async () => this.renderHTML(node, options));
-  }
-
-  /**
-   * Serializes calls to the given function, the DOM environment is patched
-   * process-wide during rendering so only one render may run at a time.
-   *
-   * @param fn The function to run once preceding renders have completed
-   * @returns The result of the function
-   */
-  private static withRenderLock<T>(fn: () => Promise<T>): Promise<T> {
-    const run = this.renderQueue.then(fn, fn);
-    this.renderQueue = run.catch(() => undefined);
-    return run;
-  }
-
-  /** Chain serializing concurrent HTML renders. */
-  private static renderQueue: Promise<unknown> = Promise.resolve();
-
-  /**
-   * Flushes pending React passive effects, and any zero-delay timers they
-   * schedule, by yielding a fixed number of macrotask turns. Errors thrown
-   * inside effects surface as uncaught timer exceptions rather than being
-   * caught by the node view fallback.
-   *
-   * @param turns The number of macrotask turns to yield
-   */
-  private static async flushReactEffects(turns = 3) {
-    for (let i = 0; i < turns; i++) {
-      await delay(0);
-    }
-  }
-
-  private static async renderHTML(node: Node, options?: HTMLOptions) {
-    let view;
-    let cleanupEnv;
-    let dom: JSDOM | undefined;
-
-    // Loaded lazily to keep jsdom and react-dom off the startup path — only
-    // HTML export needs them. Imported under the render lock while globals are
-    // unpatched so that React's scheduler binds Node-compatible timers rather
-    // than the JSDOM window.
+    // Loaded lazily to keep jsdom and react-dom off the startup path — only HTML
+    // export needs them. react-dom must additionally be imported here, before
+    // patchGlobalEnv runs, while `window` is still unpatched: `scheduler` binds
+    // a setTimeout fallback only when `window` is undefined at module load; if
+    // loaded while jsdom globals are patched it binds a MessageChannel that
+    // holds the event loop open.
     const { JSDOM } = await import("jsdom");
-    const { createNodeViews } = await import("@server/editor/nodeViews");
+    const { createNodeViews } = await import("../../editor/nodeViews");
 
+    const sheet = new ServerStyleSheet();
+    let html = "";
+    let styleTags = "";
+
+    const Centered = options?.centered
+      ? styled.article`
+          max-width: calc(
+            ${EditorStyleHelper.documentWidth} +
+              ${EditorStyleHelper.documentGutter}
+          );
+          margin: 0 auto;
+          padding: 0 1em;
+        `
+      : "article";
+
+    const rtl = isRTL(node.textBetween(0, Math.min(node.content.size, 100)));
+    const content = <div id="content" className="ProseMirror exported" />;
+    const children = (
+      <>
+        {options?.title && <h1 dir={rtl ? "rtl" : "ltr"}>{options.title}</h1>}
+        {options?.includeStyles !== false ? (
+          <EditorContainer dir={rtl ? "rtl" : "ltr"} $rtl={rtl} staticHTML>
+            {content}
+          </EditorContainer>
+        ) : (
+          content
+        )}
+      </>
+    );
+
+    // First render the containing document which has all the editor styles,
+    // global styles, layout and title. This is a pure render that does not
+    // touch process globals, so it stays outside the export lock below.
     try {
-      const sheet = new ServerStyleSheet();
-      let html = "";
-      let styleTags = "";
-
-      const Centered = options?.centered
-        ? styled.article`
-            max-width: calc(
-              ${EditorStyleHelper.documentWidth} +
-                ${EditorStyleHelper.documentGutter}
-            );
-            margin: 0 auto;
-            padding: 0 1em;
-          `
-        : "article";
-
-      const rtl = isRTL(node.textBetween(0, Math.min(node.content.size, 100)));
-      const content = <div id="content" className="ProseMirror exported" />;
-      const children = (
-        <>
-          {options?.title && <h1 dir={rtl ? "rtl" : "ltr"}>{options.title}</h1>}
-          {options?.includeStyles !== false ? (
-            <EditorContainer dir={rtl ? "rtl" : "ltr"} $rtl={rtl} staticHTML>
-              {content}
-            </EditorContainer>
-          ) : (
-            content
-          )}
-        </>
+      html = renderToString(
+        sheet.collectStyles(
+          <ThemeProvider theme={light}>
+            <>
+              {options?.includeStyles === false ? (
+                <article>{children}</article>
+              ) : (
+                <>
+                  <GlobalStyles staticHTML />
+                  <Centered>{children}</Centered>
+                </>
+              )}
+            </>
+          </ThemeProvider>
+        )
       );
-
-      // First render the containing document which has all the editor styles,
-      // global styles, layout and title.
-      try {
-        html = renderToString(
-          sheet.collectStyles(
-            <ThemeProvider theme={light}>
-              <>
-                {options?.includeStyles === false ? (
-                  <article>{children}</article>
-                ) : (
-                  <>
-                    <GlobalStyles staticHTML />
-                    <Centered>{children}</Centered>
-                  </>
-                )}
-              </>
-            </ThemeProvider>
-          )
-        );
-        styleTags = sheet.getStyleTags();
-      } catch (error) {
-        Logger.error(
-          "Failed to render styles on node HTML conversion",
-          toError(error)
-        );
-      } finally {
-        sheet.seal();
-      }
-
-      // Render the Prosemirror document using virtual DOM and serialize the
-      // result to a string
-      dom = new JSDOM(
-        `<!DOCTYPE html><meta charset="utf-8">${
-          options?.includeStyles === false ? "" : styleTags
-        }${html}`
+      styleTags = sheet.getStyleTags();
+    } catch (error) {
+      Logger.error(
+        "Failed to render styles on node HTML conversion",
+        toError(error)
       );
-      const doc = dom.window.document;
-      const target = doc.getElementById("content");
+    } finally {
+      sheet.seal();
+    }
 
-      cleanupEnv = this.patchGlobalEnv(dom.window);
+    // Render the Prosemirror document using virtual DOM and serialize the
+    // result to a string
+    const dom = new JSDOM(
+      `<!DOCTYPE html><meta charset="utf-8">${
+        options?.includeStyles === false ? "" : styleTags
+      }${html}`
+    );
+    const doc = dom.window.document;
+    const target = doc.getElementById("content");
 
-      // Collects styles from React components rendered as node views.
+    // Rendering node components patches process globals (patchGlobalEnv) and
+    // awaits an effect flush, opening a window where a concurrent export could
+    // re-patch globals mid-flight — so exports are serialized per process.
+    return ProsemirrorHelper.runExclusive(async () => {
+      let view;
+      let cleanupEnv;
+      // Per-export sheet so component styles are collected in isolation and
+      // never bind to another export's document.
       const componentSheet = new ServerStyleSheet();
-      const nodeViews = createNodeViews(componentSheet);
 
-      const diffPlugins = options?.changes
-        ? new Diff({ changes: options.changes }).plugins
-        : [];
-      const editorPlugins = [...plugins, ...diffPlugins];
+      try {
+        cleanupEnv = this.patchGlobalEnv(dom.window);
 
-      for (const plugin of plugins) {
-        if (
-          !plugin.props.decorations ||
-          pluginsWithSafeDecorations.has(plugin)
-        ) {
-          continue;
-        }
+        const nodeViews = createNodeViews(componentSheet);
 
-        plugin.props.decorations = () => DecorationSet.empty;
-        pluginsWithSafeDecorations.add(plugin);
-      }
+        const diffPlugins = options?.changes
+          ? new Diff({ changes: options.changes }).plugins
+          : [];
+        const editorPlugins = [...plugins, ...diffPlugins];
 
-      for (const plugin of diffPlugins) {
-        if (
-          !plugin.props.decorations ||
-          pluginsWithSafeDecorations.has(plugin)
-        ) {
-          continue;
-        }
-
-        const decorations = plugin.props.decorations.bind(plugin);
-        plugin.props.decorations = (state) => {
-          const result = decorations(state);
-          return isDecorationSource(result) ? result : DecorationSet.empty;
-        };
-        pluginsWithSafeDecorations.add(plugin);
-      }
-
-      const state = EditorState.create({
-        doc: node,
-        plugins: editorPlugins,
-        schema,
-      });
-
-      view = new EditorView(
-        { mount: target as HTMLElement },
-        {
-          state,
-          editable: () => false,
-          nodeViews,
-        }
-      );
-
-      // Allow components that render content in an effect, such as embeds, to
-      // complete before the document is serialized.
-      await this.flushReactEffects();
-
-      // Components may render editable regions, such as captions, but the
-      // exported document is static.
-      for (const el of doc.querySelectorAll('[contenteditable="true"]')) {
-        el.removeAttribute("contenteditable");
-      }
-
-      // Convert relative urls to absolute
-      if (options?.baseUrl) {
-        const elements = doc.querySelectorAll("a[href]");
-        for (const el of elements) {
-          if ("href" in el && (el.href as string).startsWith("/")) {
-            el.href = new URL(el.href as string, options.baseUrl).toString();
+        for (const plugin of plugins) {
+          if (
+            !plugin.props.decorations ||
+            pluginsWithSafeDecorations.has(plugin)
+          ) {
+            continue;
           }
-        }
-      }
 
-      // Inject mermaidjs scripts if the document contains mermaid diagrams (supports both "mermaid" and "mermaidjs")
-      if (options?.includeMermaid) {
-        const mermaidElements = dom.window.document.querySelectorAll(
-          `[data-language="mermaid"] pre code, [data-language="mermaidjs"] pre code`
+          plugin.props.decorations = () => DecorationSet.empty;
+          pluginsWithSafeDecorations.add(plugin);
+        }
+
+        for (const plugin of diffPlugins) {
+          if (
+            !plugin.props.decorations ||
+            pluginsWithSafeDecorations.has(plugin)
+          ) {
+            continue;
+          }
+
+          const decorations = plugin.props.decorations.bind(plugin);
+          plugin.props.decorations = (state) => {
+            const result = decorations(state);
+            return isDecorationSource(result) ? result : DecorationSet.empty;
+          };
+          pluginsWithSafeDecorations.add(plugin);
+        }
+
+        const state = EditorState.create({
+          doc: node,
+          plugins: editorPlugins,
+          schema,
+        });
+
+        view = new EditorView(
+          { mount: target as HTMLElement },
+          {
+            state,
+            editable: () => false,
+            nodeViews,
+          }
         );
 
-        // Unwrap <pre> tags to enable Mermaid script to correctly render inner content
-        for (const el of mermaidElements) {
-          const parent = el.parentNode as HTMLElement;
-          if (parent) {
-            while (el.firstChild) {
-              parent.insertBefore(el.firstChild, el);
+        // Flush passive effects so components that mount content asynchronously
+        // (e.g. Frame's iframe) commit before serialization, then rewriting.
+        await this.flushReactEffects();
+
+        // Components may render editable regions, such as captions, but the
+        // exported document is static.
+        for (const el of doc.querySelectorAll('[contenteditable="true"]')) {
+          el.removeAttribute("contenteditable");
+        }
+
+        // Convert relative urls to absolute
+        if (options?.baseUrl) {
+          const elements = doc.querySelectorAll("a[href]");
+          for (const el of elements) {
+            if ("href" in el && (el.href as string).startsWith("/")) {
+              el.href = new URL(el.href as string, options.baseUrl).toString();
             }
-            parent.removeChild(el);
-            parent.setAttribute("class", "mermaid");
           }
         }
 
-        const element = dom.window.document.createElement("script");
-        element.setAttribute("type", "module");
+        // Inject mermaidjs scripts if the document contains mermaid diagrams (supports both "mermaid" and "mermaidjs")
+        if (options?.includeMermaid) {
+          const mermaidElements = dom.window.document.querySelectorAll(
+            `[data-language="mermaid"] pre code, [data-language="mermaidjs"] pre code`
+          );
 
-        if (options?.cspNonce) {
-          element.setAttribute("nonce", options.cspNonce);
-        }
+          // Unwrap <pre> tags to enable Mermaid script to correctly render inner content
+          for (const el of mermaidElements) {
+            const parent = el.parentNode as HTMLElement;
+            if (parent) {
+              while (el.firstChild) {
+                parent.insertBefore(el.firstChild, el);
+              }
+              parent.removeChild(el);
+              parent.setAttribute("class", "mermaid");
+            }
+          }
 
-        // Inject Mermaid script
-        if (mermaidElements.length) {
-          element.innerHTML = `
+          const element = dom.window.document.createElement("script");
+          element.setAttribute("type", "module");
+
+          if (options?.cspNonce) {
+            element.setAttribute("nonce", options.cspNonce);
+          }
+
+          // Inject Mermaid script
+          if (mermaidElements.length) {
+            element.innerHTML = `
           import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs';
           import elkLayouts from 'https://cdn.jsdelivr.net/npm/@mermaid-js/layout-elk/dist/mermaid-layout-elk.esm.min.mjs';
           mermaid.registerLayoutLoaders(elkLayouts);
@@ -734,60 +707,104 @@ export class ProsemirrorHelper extends SharedProsemirrorHelper {
           });
           window.status = "ready";
         `;
-        } else {
-          element.innerHTML = `
+          } else {
+            element.innerHTML = `
           window.status = "ready";
         `;
+          }
+
+          dom.window.document.body.appendChild(element);
         }
 
-        dom.window.document.body.appendChild(element);
-      }
-
-      // Include the KaTeX stylesheet if the document contains rendered math, so
-      // that formulas display correctly in the exported HTML/PDF.
-      if (doc.querySelector(".katex")) {
-        const link = doc.createElement("link");
-        link.setAttribute("rel", "stylesheet");
-        link.setAttribute("href", katexStylesheetUrl);
-        doc.head.appendChild(link);
-      }
-
-      if (options?.includeStyles !== false) {
-        const componentStyles = componentSheet.getStyleTags();
-        if (componentStyles) {
-          doc.head.insertAdjacentHTML("beforeend", componentStyles);
+        // Include the KaTeX stylesheet if the document contains rendered math, so
+        // that formulas display correctly in the exported HTML/PDF.
+        if (doc.querySelector(".katex")) {
+          const link = doc.createElement("link");
+          link.setAttribute("rel", "stylesheet");
+          link.setAttribute("href", katexStylesheetUrl);
+          doc.head.appendChild(link);
         }
-      }
-      componentSheet.seal();
 
-      const output = dom.serialize();
-
-      if (options?.includeHead === false) {
-        // replace everything upto and including "<body>"
-        const body = "<body>";
-        const bodyIndex = output.indexOf(body) + body.length;
-        if (bodyIndex !== -1) {
-          return output
-            .substring(bodyIndex)
-            .replace("</body>", "")
-            .replace("</html>", "");
+        // Emit the styles collected while rendering node components, mirroring
+        // how the shell's styles are injected above.
+        if (options?.includeStyles !== false) {
+          const componentStyleTags = componentSheet.getStyleTags();
+          if (componentStyleTags) {
+            doc.head.insertAdjacentHTML("beforeend", componentStyleTags);
+          }
         }
-      }
 
-      return output;
-    } finally {
-      try {
-        view?.destroy();
-      } catch (err) {
-        Logger.error("Error destroying ProseMirror view", toError(err));
+        const output = dom.serialize();
+
+        if (options?.includeHead === false) {
+          // replace everything upto and including "<body>"
+          const body = "<body>";
+          const bodyIndex = output.indexOf(body) + body.length;
+          if (bodyIndex !== -1) {
+            return output
+              .substring(bodyIndex)
+              .replace("</body>", "")
+              .replace("</html>", "");
+          }
+        }
+
+        return output;
+      } finally {
+        try {
+          view?.destroy();
+        } catch (err) {
+          Logger.error("Error destroying ProseMirror view", toError(err));
+        }
+        try {
+          dom.window.close();
+        } catch (_err) {
+          // Best effort, closing the window releases its timers and resources.
+        }
+        cleanupEnv?.();
+        componentSheet.seal();
       }
-      try {
-        dom?.window.close();
-      } catch (_err) {
-        // Best effort, closing the window releases its timers and resources.
-      }
-      cleanupEnv?.();
+    });
+  }
+
+  /** Promise chain serializing HTML exports within the process. */
+  private static htmlRenderQueue: Promise<void> = Promise.resolve();
+
+  /**
+   * Flushes React passive effects and the follow-on renders they trigger by
+   * yielding a few macrotask turns. Turn 1 flushes passive effects, turn 2
+   * fires Frame's own `setTimeout(0)` whose synchronous setState commits its
+   * iframe, and turn 3 absorbs any follow-on effects.
+   *
+   * Errors thrown inside passive effects (as opposed to initial render) are
+   * not caught by the node view's try/catch fallback — current components'
+   * effects are jsdom-safe.
+   *
+   * @param turns The number of macrotask turns to yield.
+   * @returns A promise that resolves once the turns have elapsed.
+   */
+  private static async flushReactEffects(turns = 3): Promise<void> {
+    for (let i = 0; i < turns; i++) {
+      // node:timers/promises is not replaced by test environments faking the
+      // global timers, which would otherwise deadlock the render lock.
+      await delay(0);
     }
+  }
+
+  /**
+   * Serializes HTML exports within a process. Exports patch process globals and
+   * await effect flushes, so overlapping them would let one export re-patch
+   * globals while another is mid-render.
+   *
+   * @param task The critical section to run exclusively.
+   * @returns The result of the task.
+   */
+  private static runExclusive<T>(task: () => Promise<T>): Promise<T> {
+    const result = ProsemirrorHelper.htmlRenderQueue.then(task, task);
+    ProsemirrorHelper.htmlRenderQueue = result.then(
+      () => undefined,
+      () => undefined
+    );
+    return result;
   }
 
   /**

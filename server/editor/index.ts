@@ -22,7 +22,11 @@ populateEmojiData(data as EmojiMartData);
 const stubEditor = (s: Schema): Editor =>
   ({
     schema: s,
-    props: { theme: { isDark: false }, embeds: defaultEmbeds },
+    props: {
+      theme: { isDark: false },
+      embeds: defaultEmbeds,
+      embedsDisabled: false,
+    },
   }) as unknown as Editor;
 
 const extensions = withComments(richExtensions);
