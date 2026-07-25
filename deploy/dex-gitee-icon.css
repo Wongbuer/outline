@@ -1,4 +1,4 @@
-a[href$="/auth/gitee"] .dex-btn-icon--oauth {
+a[href*="/auth/gitee"] .dex-btn-icon--oauth {
   background-color: #f5f5f5;
   background-image: url(../static/img/gitee-icon.svg);
   background-size: 24px;
