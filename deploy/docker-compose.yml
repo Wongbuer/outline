@@ -1,6 +1,6 @@
 # Outline self-host on 154.36.184.81
 # Domain: docs.zengxjlab.org
-# Auth: Dex -> GitHub only (no local password)
+# Auth: Dex -> GitHub/Gitee (no local password)
 
 services:
   outline:
@@ -63,10 +63,43 @@ services:
     networks:
       - outline
 
+  gitee-userinfo:
+    image: outline-gitee-userinfo:local
+    pull_policy: never
+    build:
+      context: .
+      dockerfile: Dockerfile.gitee-userinfo
+    container_name: outline-gitee-userinfo
+    restart: unless-stopped
+    user: "65532:65532"
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      - outline
+    expose:
+      - "3000"
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "/gitee-userinfo",
+          "healthcheck",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+
   dex:
     image: ghcr.io/dexidp/dex:v2.41.1
     container_name: outline-dex
     restart: unless-stopped
+    depends_on:
+      gitee-userinfo:
+        condition: service_healthy
     command: ["dex", "serve", "/etc/dex/config.yaml"]
     volumes:
       - ./dex-config.yaml:/etc/dex/config.yaml:ro

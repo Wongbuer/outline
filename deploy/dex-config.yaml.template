@@ -1,4 +1,4 @@
-# Dex OIDC for Outline — GitHub login only (no local passwords)
+# Dex OIDC for Outline — GitHub and Gitee (no local passwords)
 issuer: https://docs.zengxjlab.org/dex
 
 storage:
@@ -25,6 +25,26 @@ connectors:
       clientID: ${GITHUB_CLIENT_ID}
       clientSecret: ${GITHUB_CLIENT_SECRET}
       redirectURI: https://docs.zengxjlab.org/dex/callback
+
+  - type: oauth
+    id: gitee
+    name: Gitee
+    config:
+      clientID: ${GITEE_CLIENT_ID}
+      clientSecret: ${GITEE_CLIENT_SECRET}
+      redirectURI: https://docs.zengxjlab.org/dex/callback
+      tokenURL: http://gitee-userinfo:3000/token
+      authorizationURL: https://gitee.com/oauth/authorize
+      userInfoURL: http://gitee-userinfo:3000/userinfo
+      scopes:
+        - user_info
+        - emails
+      userIDKey: id
+      claimMapping:
+        userNameKey: name
+        preferredUsernameKey: login
+        emailKey: email
+        emailVerifiedKey: email_verified
 
 oauth2:
   skipApprovalScreen: true
