@@ -1,0 +1,12 @@
+FROM ghcr.io/dexidp/dex:v2.41.1
+
+USER root
+
+COPY --chown=1001:1001 dex-gitee-icon.svg /srv/dex/web/static/img/gitee-icon.svg
+COPY dex-gitee-icon.css /tmp/dex-gitee-icon.css
+
+RUN cat /tmp/dex-gitee-icon.css >> /srv/dex/web/themes/light/styles.css && \
+    cat /tmp/dex-gitee-icon.css >> /srv/dex/web/themes/dark/styles.css && \
+    rm /tmp/dex-gitee-icon.css
+
+USER 1001:1001

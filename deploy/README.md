@@ -4,6 +4,8 @@
 镜像：`ghcr.io/wongbuer/outline:latest`  
 登录：Dex + **GitHub/Gitee**（无本地密码）
 
+Dex 基于官方 `v2.41.1` 构建轻量覆盖镜像 `ghcr.io/wongbuer/dex-gitee:v2.41.1-1`，只增加 Gitee 登录图标，不修改 Dex 业务代码。相关文件变更推送到 `main` 后由 GitHub Actions 自动构建。
+
 ## 1. GitHub OAuth App
 
 1. GitHub → Settings → Developer settings → **OAuth Apps** → New  
@@ -93,6 +95,16 @@ cd /opt/outline
 docker compose pull outline
 docker compose up -d outline
 ```
+
+更新 Dex 覆盖镜像：
+
+```bash
+cd /opt/outline
+docker compose pull dex
+docker compose up -d --no-deps dex
+```
+
+升级 Dex 时，只需同步修改 `Dockerfile.dex` 中的上游版本、工作流中的镜像标签，以及 `.env.example` / `docker-compose.yml` 中的默认 `DEX_IMAGE` 标签；无需维护 Dex 源码分支。
 
 ## 资源注意
 

@@ -94,7 +94,7 @@ services:
       start_period: 5s
 
   dex:
-    image: ghcr.io/dexidp/dex:v2.41.1
+    image: ${DEX_IMAGE:-ghcr.io/wongbuer/dex-gitee:v2.41.1-1}
     container_name: outline-dex
     restart: unless-stopped
     depends_on:

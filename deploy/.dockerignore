@@ -1,3 +1,6 @@
 *
 !Dockerfile.gitee-userinfo
 !gitee-userinfo.go
+!Dockerfile.dex
+!dex-gitee-icon.css
+!dex-gitee-icon.svg
