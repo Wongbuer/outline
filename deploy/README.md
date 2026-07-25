@@ -4,7 +4,7 @@
 镜像：`ghcr.io/wongbuer/outline:latest`  
 登录：Dex + **GitHub/Gitee**（无本地密码）
 
-Dex 基于官方 `v2.41.1` 构建轻量覆盖镜像 `ghcr.io/wongbuer/dex-gitee:v2.41.1-1`，只增加 Gitee 登录图标，不修改 Dex 业务代码。相关文件变更推送到 `main` 后由 GitHub Actions 自动构建。
+Dex 基于官方 `v2.41.1` 构建轻量覆盖镜像 `ghcr.io/wongbuer/dex-gitee:v2.41.1-1`，通过官方 `DEX_FRONTEND_DIR` 机制增加 Gitee 登录图标，不修改 Dex 业务代码。相关文件变更推送到 `main` 后由 GitHub Actions 自动构建。
 
 ## 1. GitHub OAuth App
 
