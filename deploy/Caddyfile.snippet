@@ -1,0 +1,19 @@
+# Append into /opt/caddy/Caddyfile on 154.36.184.81
+# Requires CF_API_TOKEN with DNS:Edit on zengxjlab.org zone.
+
+docs.zengxjlab.org {
+	encode zstd gzip
+
+	# Dex OIDC under /dex
+	handle /dex/* {
+		reverse_proxy outline-dex:5556
+	}
+
+	handle {
+		reverse_proxy outline:3000
+	}
+
+	tls {
+		dns cloudflare {env.CF_API_TOKEN}
+	}
+}

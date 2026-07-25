@@ -1,0 +1,83 @@
+# Outline self-host on 154.36.184.81
+# Domain: docs.zengxjlab.org
+# Auth: Dex -> GitHub only (no local password)
+
+services:
+  outline:
+    image: ${OUTLINE_IMAGE:-ghcr.io/wongbuer/outline:latest}
+    container_name: outline
+    restart: unless-stopped
+    env_file:
+      - .env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      dex:
+        condition: service_started
+    volumes:
+      - ./data/outline:/var/lib/outline/data
+    networks:
+      - outline
+      - edge
+    expose:
+      - "3000"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:3000/_health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 40s
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: outline-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: outline
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: outline
+    volumes:
+      - ./data/postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U outline -d outline"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks:
+      - outline
+
+  redis:
+    image: redis:7-alpine
+    container_name: outline-redis
+    restart: unless-stopped
+    command: ["redis-server", "--save", "60", "1", "--loglevel", "warning"]
+    volumes:
+      - ./data/redis:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks:
+      - outline
+
+  dex:
+    image: ghcr.io/dexidp/dex:v2.41.1
+    container_name: outline-dex
+    restart: unless-stopped
+    command: ["dex", "serve", "/etc/dex/config.yaml"]
+    volumes:
+      - ./dex-config.yaml:/etc/dex/config.yaml:ro
+    networks:
+      - outline
+      - edge
+    expose:
+      - "5556"
+
+networks:
+  outline:
+    driver: bridge
+  edge:
+    external: true

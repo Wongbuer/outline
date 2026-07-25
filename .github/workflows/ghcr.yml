@@ -1,0 +1,96 @@
+name: Build GHCR image
+
+# 在 main 上构建并推送我们的 Outline 镜像到 GHCR：
+#   ghcr.io/wongbuer/outline:latest
+#   ghcr.io/wongbuer/outline:<sha>
+#   ghcr.io/wongbuer/outline:<semver tag if any>
+#
+# 服务器 x86_64，只构建 linux/amd64（省 CI 时间/费用）。
+# 上游 docker.yml 依赖 Blacksmith + DockerHub，这里改为标准 buildx + GHCR。
+
+on:
+  push:
+    branches:
+      - main
+    paths-ignore:
+      - "deploy/**"
+      - "MIRROR.md"
+      - "**/*.md"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: ghcr-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: wongbuer/outline
+  BASE_IMAGE_NAME: wongbuer/outline-base
+
+jobs:
+  build:
+    name: Build and push (amd64)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Docker meta (base)
+        id: base_meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.BASE_IMAGE_NAME }}
+          tags: |
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=sha,prefix=,format=short
+
+      - name: Build and push base image
+        id: base_build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile.base
+          push: true
+          platforms: linux/amd64
+          tags: ${{ steps.base_meta.outputs.tags }}
+          labels: ${{ steps.base_meta.outputs.labels }}
+          cache-from: type=gha,scope=outline-base
+          cache-to: type=gha,mode=max,scope=outline-base
+
+      - name: Docker meta (app)
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=sha,prefix=,format=short
+            type=ref,event=branch
+
+      - name: Build and push app image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile
+          push: true
+          platforms: linux/amd64
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            BASE_IMAGE=${{ env.REGISTRY }}/${{ env.BASE_IMAGE_NAME }}:latest
+          cache-from: type=gha,scope=outline-app
+          cache-to: type=gha,mode=max,scope=outline-app

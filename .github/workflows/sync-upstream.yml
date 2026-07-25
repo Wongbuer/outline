@@ -1,0 +1,33 @@
+name: Sync upstream
+
+# 把上游 outline/outline 的 main 同步到本仓库的 upstream-main 分支（纯净镜像，勿手改）。
+# 定制只在 main；更新时手动 merge origin/upstream-main -> main。
+
+on:
+  schedule:
+    - cron: "0 4 * * *" # 每天 UTC 04:00
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+concurrency:
+  group: sync-upstream
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    name: Sync upstream main -> upstream-main
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fetch upstream and push to upstream-main
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          git clone --bare "https://github.com/outline/outline.git" upstream.git
+          cd upstream.git
+          git push --force \
+            "https://x-access-token:${GH_TOKEN}@github.com/Wongbuer/outline.git" \
+            refs/heads/main:refs/heads/upstream-main
+          echo "synced outline/outline main -> Wongbuer/outline upstream-main"
