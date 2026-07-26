@@ -13,11 +13,7 @@ export default () => (
           <EmptySpace height={40} />
           <img
             alt={env.APP_NAME}
-            src={
-              env.isCloudHosted
-                ? `${url}/email/header-logo.png`
-                : "cid:header-image"
-            }
+            src={`${url}/email/header-logo.png`}
             height="48"
             width="48"
           />

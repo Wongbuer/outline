@@ -199,15 +199,6 @@ export class Mailer {
               },
             }
           : undefined,
-        attachments: env.isCloudHosted
-          ? undefined
-          : [
-              {
-                filename: "header-logo.png",
-                path: process.cwd() + "/public/email/header-logo.png",
-                cid: "header-image",
-              },
-            ],
       });
 
       if (useTestEmailService) {
