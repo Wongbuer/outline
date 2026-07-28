@@ -2,6 +2,11 @@ name: Sync upstream
 
 # 把上游 outline/outline 的 main 同步到本仓库的 upstream-main 分支（纯净镜像，勿手改）。
 # 定制只在 main；更新时手动 merge origin/upstream-main -> main。
+#
+# 需要仓库 secret：UPSTREAM_SYNC_TOKEN
+# - classic PAT：repo + workflow
+# - 或 fine-grained PAT：Contents Read and write + Workflows Read and write（本仓库）
+# 原因：上游若改了 .github/workflows/*，GITHUB_TOKEN 无权创建/更新 workflow 文件。
 
 on:
   schedule:
@@ -9,10 +14,7 @@ on:
   workflow_dispatch: {}
 
 permissions:
-  contents: write
-  # 上游若改了 .github/workflows/*，push 到 upstream-main 需要 workflows 写权限，
-  # 否则会报：refusing to allow a GitHub App to create or update workflow ... without `workflows` permission
-  workflows: write
+  contents: read
 
 concurrency:
   group: sync-upstream
@@ -23,14 +25,24 @@ jobs:
     name: Sync upstream main -> upstream-main
     runs-on: ubuntu-latest
     steps:
+      - name: Require UPSTREAM_SYNC_TOKEN
+        env:
+          UPSTREAM_SYNC_TOKEN: ${{ secrets.UPSTREAM_SYNC_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -z "${UPSTREAM_SYNC_TOKEN}" ]; then
+            echo "::error::Missing secret UPSTREAM_SYNC_TOKEN. Create a PAT with repo+workflow (or fine-grained Contents+Workflows write) and add it as a repository secret."
+            exit 1
+          fi
+
       - name: Fetch upstream and push to upstream-main
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          UPSTREAM_SYNC_TOKEN: ${{ secrets.UPSTREAM_SYNC_TOKEN }}
         run: |
           set -euo pipefail
           git clone --bare "https://github.com/outline/outline.git" upstream.git
           cd upstream.git
           git push --force \
-            "https://x-access-token:${GH_TOKEN}@github.com/Wongbuer/outline.git" \
+            "https://x-access-token:${UPSTREAM_SYNC_TOKEN}@github.com/Wongbuer/outline.git" \
             refs/heads/main:refs/heads/upstream-main
           echo "synced outline/outline main -> Wongbuer/outline upstream-main"
