@@ -10,6 +10,9 @@ on:
 
 permissions:
   contents: write
+  # 上游若改了 .github/workflows/*，push 到 upstream-main 需要 workflows 写权限，
+  # 否则会报：refusing to allow a GitHub App to create or update workflow ... without `workflows` permission
+  workflows: write
 
 concurrency:
   group: sync-upstream
