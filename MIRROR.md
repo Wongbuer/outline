@@ -7,6 +7,22 @@
 | `upstream-main` | 上游 `outline/outline` main 的纯净镜像，**勿手改**；由 `.github/workflows/sync-upstream.yml` 每天同步覆盖 |
 | `main` | 我们的部署/定制分支；二开只在这里做 |
 
+## 上游同步 Secret
+
+`Sync upstream` 不能用默认 `GITHUB_TOKEN`：上游若改了 `.github/workflows/*`，push 会被拒（缺少 workflow 写权限）。
+
+仓库需配置 secret **`UPSTREAM_SYNC_TOKEN`**：
+
+- classic PAT：`repo` + `workflow`
+- 或 fine-grained PAT：对本仓库 `Contents: Read and write` + `Workflows: Read and write`
+
+```bash
+# 创建 token 后写入 secret
+gh secret set UPSTREAM_SYNC_TOKEN --repo Wongbuer/outline
+# 然后手动跑一次验证
+gh workflow run sync-upstream.yml --repo Wongbuer/outline
+```
+
 ## 更新上游
 
 ```bash
